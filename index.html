@@ -10,6 +10,18 @@
   <script src="https://unpkg.com/leaflet@1.9.3/dist/leaflet.js"></script>
 
   <style>
+    .btn-remove-slot {
+  background: transparent;
+  border: none;
+  color: #c62828;
+  font-size: 1rem;
+  cursor: pointer;
+  padding: 2px 6px;
+}
+
+.btn-remove-slot:hover {
+  color: #8e0000;
+}
     body {
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
                    Roboto, Arial, sans-serif;
@@ -36,6 +48,24 @@
       font-size: 0.9rem;
       text-align: center;
       color: #444;
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: center;
+      margin-bottom: 8px;
+    }
+    .toolbar button {
+      border-radius: 999px;
+      border: 1px solid #2563eb;
+      background: #2563eb;
+      color: #fff;
+      font-size: 0.9rem;
+      padding: 6px 14px;
+      cursor: pointer;
+    }
+    .toolbar button:hover {
+      background: #1d4ed8;
     }
 
     .slot {
@@ -136,12 +166,16 @@
   <div class="card">
     <h1>Localización con tiempos S–P</h1>
     <p class="desc">
-      Elige hasta cinco estaciones, escribe el valor de <strong>S–P</strong> en segundos
+      Agrega estaciones, escribe el valor de <strong>S–P</strong> en segundos
       y la app dibuja los círculos de distancia aproximada (<em>S–P</em> × 8 km) en el mapa.
       Puedes marcar manualmente el epicentro haciendo clic en el mapa.
     </p>
 
-    <!-- 5 SLOTS -->
+    <div class="toolbar">
+      <button id="btnAddSlot">➕ Agregar estación</button>
+    </div>
+
+    <!-- Contenedor de filas -->
     <div id="slots"></div>
 
     <div id="map"></div>
@@ -225,26 +259,57 @@
     };
 
     const SPEED = 8; // km/s
-    const SLOT_COLORS = ['#c62828','#1565c0','#2e7d32','#6a1b9a','#ef6c00'];
+    const SLOT_COLORS = ['#c62828','#1565c0','#2e7d32','#6a1b9a','#ef6c00','#00838f','#8e24aa'];
 
     const slotsContainer = document.getElementById('slots');
-    const slotState = [];  // { select, input, distSpan, circle, color, currentCode }
-    const stationMarkers = {};  // code -> marker
-    const stationUsage = {};    // code -> #slots que lo usan
+    const btnAddSlot = document.getElementById('btnAddSlot');
+
+    const slotState = [];          // { select, input, distSpan, circle, color, currentCode }
+    const stationMarkers = {};     // code -> marker
+    const stationUsage = {};       // code -> #slots que lo usan
+
+    // ------------------ Mapa ------------------
+    const map = L.map('map').setView([23, -102], 5.3);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 18,
+      attribution: '© OpenStreetMap contributors'
+    }).addTo(map);
+
+    // Marcador manual de epicentro
+    let epicenterMarker = null;
+
+    map.on('click', function (e) {
+      const lat = e.latlng.lat;
+      const lon = e.latlng.lng;
+
+      if (epicenterMarker) {
+        map.removeLayer(epicenterMarker);
+      }
+
+      epicenterMarker = L.marker(e.latlng).addTo(map)
+        .bindPopup(`<b>Punto marcado</b><br>Lat: ${lat.toFixed(4)}°<br>Lon: ${lon.toFixed(4)}°`)
+        .openPopup();
+
+      document.getElementById('epicLat').textContent = lat.toFixed(4);
+      document.getElementById('epicLon').textContent = lon.toFixed(4);
+    });
 
     // ------------------ Crear filas de controles ------------------
-    function createSlot(i) {
+    function createSlot() {
+      const index = slotState.length;
+      const color = SLOT_COLORS[index % SLOT_COLORS.length];
+
       const slot = document.createElement('div');
       slot.className = 'slot';
-      const color = SLOT_COLORS[i];
 
       slot.innerHTML = `
-        <div class="slot-header">
-          <div class="slot-title">
-            <span class="color-dot" style="background:${color};"></span>
-            Estación ${i+1}
-          </div>
-        </div>
+<div class="slot-header">
+  <div class="slot-title">
+    <span class="color-dot" style="background:${color};"></span>
+    Estación ${index + 1}
+  </div>
+  <button class="btn-remove-slot" title="Eliminar estación">❌</button>
+</div>
         <div class="slot-grid">
           <div>
             <label>Clave de estación</label>
@@ -279,38 +344,48 @@
       const state = { select: sel, input: inp, distSpan, circle: null, color, currentCode: '' };
       slotState.push(state);
 
+      // Botón para eliminar este slot
+slot.querySelector('.btn-remove-slot').addEventListener('click', () => {
+  
+  // Quitar círculo si existe
+  if (state.circle) {
+    map.removeLayer(state.circle);
+  }
+
+  // Reducir uso de la estación
+  if (state.currentCode) {
+    stationUsage[state.currentCode] = (stationUsage[state.currentCode] || 1) - 1;
+
+    if (stationUsage[state.currentCode] <= 0) {
+      stationUsage[state.currentCode] = 0;
+
+      // Quitar marcador si no lo usa nadie
+      if (stationMarkers[state.currentCode]) {
+        map.removeLayer(stationMarkers[state.currentCode]);
+        delete stationMarkers[state.currentCode];
+      }
+    }
+  }
+
+  // Quitar slot de la página
+  slot.remove();
+
+  // Quitar del arreglo de estados
+  const idx = slotState.indexOf(state);
+  if (idx >= 0) slotState.splice(idx, 1);
+});
+
       sel.addEventListener('change', () => updateSlot(state));
       inp.addEventListener('input', () => updateSlot(state));
     }
 
-    for (let i = 0; i < 5; i++) {
-      createSlot(i);
-    }
+    // Primer fila al cargar
+    createSlot();
 
-    // ------------------ Mapa ------------------
-    const map = L.map('map').setView([23, -102], 5.3);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 18,
-      attribution: '© OpenStreetMap contributors'
-    }).addTo(map);
-
-    // Marcador manual de epicentro
-    let epicenterMarker = null;
-
-    map.on('click', function (e) {
-      const lat = e.latlng.lat;
-      const lon = e.latlng.lng;
-
-      if (epicenterMarker) {
-        map.removeLayer(epicenterMarker);
-      }
-
-      epicenterMarker = L.marker(e.latlng).addTo(map)
-        .bindPopup(`<b>Punto marcado</b><br>Lat: ${lat.toFixed(4)}°<br>Lon: ${lon.toFixed(4)}°`)
-        .openPopup();
-
-      document.getElementById('epicLat').textContent = lat.toFixed(4);
-      document.getElementById('epicLon').textContent = lon.toFixed(4);
+    btnAddSlot.addEventListener('click', () => {
+      createSlot();
+      // Scroll un poco para que se vea la nueva fila
+      slotsContainer.lastElementChild.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
     });
 
     // ------------------ Lógica de slots ------------------
@@ -319,7 +394,7 @@
       const newCode = state.select.value;
       const sp = parseFloat(state.input.value);
 
-      // Si cambió de estación, actualizar contadores y marcadores
+      // Actualizar conteo de uso de estación
       if (oldCode && oldCode !== newCode) {
         stationUsage[oldCode] = (stationUsage[oldCode] || 1) - 1;
         if (stationUsage[oldCode] <= 0) {
@@ -333,7 +408,7 @@
 
       state.currentCode = newCode;
 
-      // Si hay una estación seleccionada, asegurarnos de que tenga marcador
+      // Crear marcador si hay estación seleccionada
       if (newCode) {
         const st = stationData[newCode];
         if (st) {
@@ -360,7 +435,7 @@
         state.circle = null;
       }
 
-      // Si no hay estación o S–P no válido, solo actualizamos marcadores y salimos
+      // Si no hay estación válida o S–P no válido, solo actualizamos marcadores
       if (!newCode || !isFinite(sp) || sp <= 0) {
         state.distSpan.textContent = '—';
         return;
@@ -375,6 +450,7 @@
       const distKm = sp * SPEED;
       state.distSpan.textContent = distKm.toFixed(1);
 
+      // Dibujar círculo con el color del slot
       state.circle = L.circle([st.lat, st.lon], {
         radius: distKm * 1000,
         color: state.color,
